@@ -58,18 +58,16 @@ if uploaded_file is not None:
     st.subheader("🧫 Pilih Kolom Latitude, Longitude, dan Nama Titik")
     col_lat = st.selectbox("Pilih Kolom Latitude", df.columns, index=None)
     col_lon = st.selectbox("Pilih Kolom Longitude", df.columns, index=None)
-    name_columns = st.multiselect("🧷 Pilih Kolom Nama Titik (bisa lebih dari satu)", df.columns)
+    name_column = st.selectbox("Pilih Kolom Nama Titik", df.columns, index=None)
 
-    if not col_lat or not col_lon or not name_columns:
-        st.warning("Silakan pilih kolom Latitude, Longitude, dan minimal satu kolom Nama Titik.")
+    if not col_lat or not col_lon or not name_column:
+        st.warning("Silakan pilih ketiga kolom terlebih dahulu.")
         st.stop()
 
-    df = df.rename(columns={col_lat: "Latitude", col_lon: "Longitude"})
+    df = df.rename(columns={col_lat: "Latitude", col_lon: "Longitude", name_column: "NamaTitik"})
     df["Latitude"] = pd.to_numeric(df["Latitude"], errors="coerce")
     df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
     df.dropna(subset=["Latitude", "Longitude"], inplace=True)
-
-    df["NamaTitik"] = df[name_columns].astype(str).agg(" | ".join, axis=1)
 
     st.sidebar.title("🔎 Filter Lokasi")
     filter_conditions = {}
@@ -87,12 +85,15 @@ if uploaded_file is not None:
     st.sidebar.markdown("---")
     st.sidebar.subheader("🎨 Pilih Warna Untuk Titik Tertentu")
 
-    name_list = sorted(df["NamaTitik"].dropna().unique())
-    selected_name = st.sidebar.selectbox("Pilih Nama Titik", [""] + name_list)
-    color_choice = st.sidebar.selectbox("Pilih Warna", ["red", "blue", "green", "orange", "purple", "black"])
-    if selected_name:
-        if st.sidebar.button("🎯 Tandai Titik dengan Warna Ini"):
-            st.session_state.kcp_custom_colors[selected_name] = color_choice
+    warna_column = st.sidebar.selectbox("🖍️ Pilih Kolom Referensi Warna", df.columns, index=None)
+    if warna_column:
+        name_list = sorted(df[warna_column].dropna().unique())
+        selected_names = st.sidebar.multiselect("Pilih Nilai dari Kolom Warna", name_list)
+        color_choice = st.sidebar.selectbox("Pilih Warna", ["red", "blue", "green", "orange", "purple", "black"])
+        if selected_names:
+            if st.sidebar.button("🎯 Tandai Nilai dengan Warna Ini"):
+                for val in selected_names:
+                    st.session_state.kcp_custom_colors[val] = color_choice
 
     if st.sidebar.button("🔄 Reset Semua Warna"):
         st.session_state.kcp_custom_colors = {}
@@ -123,9 +124,9 @@ if uploaded_file is not None:
         mime="application/json"
     )
 
-    # Visualisasi Peta
     lat_center = df["Latitude"].mean()
     lon_center = df["Longitude"].mean()
+
     m = folium.Map(location=[lat_center, lon_center], zoom_start=6)
     plugins.Draw(export=True).add_to(m)
 
@@ -135,8 +136,9 @@ if uploaded_file is not None:
     for _, row in df.iterrows():
         lat, lon = row["Latitude"], row["Longitude"]
         warna = "blue"
-        if row["NamaTitik"] in st.session_state.kcp_custom_colors:
-            warna = st.session_state.kcp_custom_colors[row["NamaTitik"]]
+        ref_value = row[warna_column] if warna_column in row else None
+        if ref_value in st.session_state.kcp_custom_colors:
+            warna = st.session_state.kcp_custom_colors[ref_value]
         elif "Warna" in row and pd.notna(row["Warna"]):
             warna = row["Warna"]
 
@@ -169,11 +171,11 @@ if uploaded_file is not None:
 
     st_data = st_folium(m, use_container_width=True, height=700)
 
-    # Export data ke Excel
     df_export = df.copy()
     def get_final_color(row):
-        if row["NamaTitik"] in st.session_state.kcp_custom_colors:
-            return st.session_state.kcp_custom_colors[row["NamaTitik"]]
+        ref_val = row[warna_column] if warna_column in row else None
+        if ref_val in st.session_state.kcp_custom_colors:
+            return st.session_state.kcp_custom_colors[ref_val]
         elif "Warna" in row and pd.notna(row["Warna"]):
             return row["Warna"]
         else:
