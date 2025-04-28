@@ -24,6 +24,7 @@ def load_data(file):
     df.columns = df.columns.str.strip()
     return df
 
+# === Initialize Session States ===
 if "kcp_custom_colors" not in st.session_state:
     st.session_state.kcp_custom_colors = {}
 if "circle_radius" not in st.session_state:
@@ -32,12 +33,19 @@ if "show_circle" not in st.session_state:
     st.session_state.show_circle = False
 if "shape_color" not in st.session_state:
     st.session_state.shape_color = "red"
-if "shape_target_color" not in st.session_state:  # 👈 Tambahan baru
+if "shape_target_color" not in st.session_state:  # <-- NEW
     st.session_state.shape_target_color = "green"
 if "enable_cluster" not in st.session_state:
     st.session_state.enable_cluster = False
 
-# Load JSON config
+# === Available Colors (19 Folium Colors) ===
+available_folium_colors = [
+    "red", "blue", "green", "purple", "orange", "darkred", "lightred",
+    "beige", "darkblue", "darkgreen", "cadetblue", "darkpurple",
+    "white", "pink", "lightblue", "lightgreen", "gray", "black", "lightgray"
+]
+
+# === Load from JSON ===
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🔄 Lanjutkan dari JSON")
 uploaded_json = st.sidebar.file_uploader("Upload file JSON", type="json")
@@ -49,7 +57,7 @@ if uploaded_json is not None:
         st.session_state.circle_radius = progress.get("circle_radius", 1.0)
         st.session_state.show_circle = progress.get("show_circle", False)
         st.session_state.shape_color = progress.get("shape_color", "red")
-        st.session_state.shape_target_color = progress.get("shape_target_color", "green")  # 👈 Tambahan baru
+        st.session_state.shape_target_color = progress.get("shape_target_color", "green")  # <-- NEW
         st.session_state.enable_cluster = progress.get("enable_cluster", False)
         st.session_state.saved_df = df
         st.success("Data dan pengaturan berhasil dimuat dari JSON.")
@@ -57,7 +65,6 @@ if uploaded_json is not None:
 if uploaded_file is not None:
     df = load_data(uploaded_file)
 
-    # Pilih kolom Latitude, Longitude, dan multi Nama Titik
     st.subheader("🧫 Pilih Kolom Latitude, Longitude, dan Nama Titik")
     col_lat = st.selectbox("Pilih Kolom Latitude", df.columns, index=None)
     col_lon = st.selectbox("Pilih Kolom Longitude", df.columns, index=None)
@@ -72,6 +79,7 @@ if uploaded_file is not None:
     df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
     df.dropna(subset=["Latitude", "Longitude"], inplace=True)
 
+    # === Sidebar Filters ===
     st.sidebar.title("🔎 Filter Lokasi")
     filter_conditions = {}
     for col in df.columns:
@@ -85,6 +93,7 @@ if uploaded_file is not None:
     for col, selected_vals in filter_conditions.items():
         df = df[df[col].isin(selected_vals)]
 
+    # === Sidebar Color Settings ===
     st.sidebar.markdown("---")
     st.sidebar.subheader("🎨 Pilih Warna Untuk Titik Tertentu")
 
@@ -92,7 +101,7 @@ if uploaded_file is not None:
     if warna_column:
         name_list = sorted(df[warna_column].dropna().unique())
         selected_names = st.sidebar.multiselect("Pilih Nilai dari Kolom Warna", name_list)
-        color_choice = st.sidebar.selectbox("Pilih Warna", ["red", "blue", "green", "orange", "purple", "black"])
+        color_choice = st.sidebar.selectbox("Pilih Warna", available_folium_colors)
         if selected_names:
             if st.sidebar.button("🎯 Tandai Nilai dengan Warna Ini"):
                 for val in selected_names:
@@ -101,24 +110,17 @@ if uploaded_file is not None:
     if st.sidebar.button("🔄 Reset Semua Warna"):
         st.session_state.kcp_custom_colors = {}
 
+    # === Sidebar Circle Settings ===
     st.sidebar.markdown("---")
     st.session_state.show_circle = st.sidebar.checkbox("🟢 Tampilkan Lingkaran Radius", value=st.session_state.show_circle)
     st.session_state.circle_radius = st.sidebar.number_input("Masukkan Radius (km) untuk Lingkaran", min_value=0.0, value=st.session_state.circle_radius, step=0.5)
-
-    # 👇 Update pilihan warna shape berdasarkan semua warna folium
-    available_folium_colors = [
-        "red", "blue", "green", "purple", "orange", "darkred", "lightred",
-        "beige", "darkblue", "darkgreen", "cadetblue", "darkpurple",
-        "white", "pink", "lightblue", "lightgreen", "gray", "black", "lightgray"
-    ]
-
     st.session_state.shape_color = st.sidebar.selectbox("Pilih Warna Lingkaran", available_folium_colors, index=available_folium_colors.index(st.session_state.shape_color))
     st.session_state.shape_target_color = st.sidebar.selectbox("Pilih Warna Titik yang Diberi Lingkaran", available_folium_colors, index=available_folium_colors.index(st.session_state.shape_target_color))
 
     st.sidebar.markdown("---")
     st.session_state.enable_cluster = st.sidebar.checkbox("📍 Aktifkan Cluster Marker", value=st.session_state.enable_cluster)
 
-    # Simpan progress JSON
+    # === Save Progress to JSON ===
     st.sidebar.markdown("---")
     progress = {
         "data": df.to_dict(orient="records"),
@@ -137,6 +139,7 @@ if uploaded_file is not None:
         mime="application/json"
     )
 
+    # === Main Map ===
     lat_center = df["Latitude"].mean()
     lon_center = df["Longitude"].mean()
 
@@ -168,7 +171,7 @@ if uploaded_file is not None:
         else:
             marker.add_to(marker_group)
 
-        # Update logika pembuatan circle, sesuai warna target yang dipilih
+        # New: Circle if warna == selected shape_target_color
         if warna == st.session_state.shape_target_color and st.session_state.show_circle:
             folium.Circle(
                 radius=st.session_state.circle_radius * 1000,
@@ -185,6 +188,7 @@ if uploaded_file is not None:
 
     st_data = st_folium(m, use_container_width=True, height=700)
 
+    # === Export Data with Final Color ===
     df_export = df.copy()
     def get_final_color(row):
         ref_val = row[warna_column] if warna_column in row else None
