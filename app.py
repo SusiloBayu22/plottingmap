@@ -34,6 +34,8 @@ if "shape_color" not in st.session_state:
     st.session_state.shape_color = "red"
 if "enable_cluster" not in st.session_state:
     st.session_state.enable_cluster = False
+if "shape_target_color" not in st.session_state:
+    st.session_state.shape_target_color = "green"
 
 # Load JSON config
 st.sidebar.markdown("---")
@@ -48,6 +50,7 @@ if uploaded_json is not None:
         st.session_state.show_circle = progress.get("show_circle", False)
         st.session_state.shape_color = progress.get("shape_color", "red")
         st.session_state.enable_cluster = progress.get("enable_cluster", False)
+        st.session_state.shape_target_color = progress.get("shape_target_color", "green")
         st.session_state.saved_df = df
         st.success("Data dan pengaturan berhasil dimuat dari JSON.")
 
@@ -99,9 +102,10 @@ if uploaded_file is not None:
         st.session_state.kcp_custom_colors = {}
 
     st.sidebar.markdown("---")
-    st.session_state.show_circle = st.sidebar.checkbox("🟢 Tampilkan Lingkaran Radius untuk marker hijau", value=st.session_state.show_circle)
+    st.session_state.show_circle = st.sidebar.checkbox("🟢 Tampilkan Lingkaran Radius untuk Marker", value=st.session_state.show_circle)
     st.session_state.circle_radius = st.sidebar.number_input("Masukkan Radius (km) untuk Lingkaran", min_value=0.0, value=st.session_state.circle_radius, step=0.5)
-    st.session_state.shape_color = st.sidebar.selectbox("Pilih Warna Shape", ["red", "blue", "green", "orange", "purple", "black"], index=["red", "blue", "green", "orange", "purple", "black"].index(st.session_state.shape_color))
+    st.session_state.shape_color = st.sidebar.selectbox("Pilih Warna Lingkaran (Shape)", ["red", "blue", "green", "orange", "purple", "black"], index=["red", "blue", "green", "orange", "purple", "black"].index(st.session_state.shape_color))
+    st.session_state.shape_target_color = st.sidebar.selectbox("🎯 Pilih Warna Marker yang Akan Diberi Lingkaran", ["red", "blue", "green", "orange", "purple", "black"], index=["red", "blue", "green", "orange", "purple", "black"].index(st.session_state.shape_target_color))
 
     st.sidebar.markdown("---")
     st.session_state.enable_cluster = st.sidebar.checkbox("📍 Aktifkan Cluster Marker", value=st.session_state.enable_cluster)
@@ -114,7 +118,8 @@ if uploaded_file is not None:
         "circle_radius": st.session_state.circle_radius,
         "show_circle": st.session_state.show_circle,
         "shape_color": st.session_state.shape_color,
-        "enable_cluster": st.session_state.enable_cluster
+        "enable_cluster": st.session_state.enable_cluster,
+        "shape_target_color": st.session_state.shape_target_color
     }
     json_bytes = json.dumps(progress).encode('utf-8')
     st.sidebar.download_button(
@@ -155,7 +160,7 @@ if uploaded_file is not None:
         else:
             marker.add_to(marker_group)
 
-        if warna == "green" and st.session_state.show_circle:
+        if warna == st.session_state.shape_target_color and st.session_state.show_circle:
             folium.Circle(
                 radius=st.session_state.circle_radius * 1000,
                 location=[lat, lon],
