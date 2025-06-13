@@ -2,226 +2,125 @@ import streamlit as st
 import pandas as pd
 import folium
 from streamlit_folium import st_folium
-from folium import plugins
-from io import BytesIO
+from folium.plugins import MarkerCluster
 import json
+import io
 
-st.set_page_config(page_title="Dynamic Map App", layout="wide")
+st.set_page_config(layout="wide", page_title="Dynamic Map Viewer")
 
-st.title("🌍️ Dynamic Map Viewer")
-st.markdown("""
-Upload file Excel berisi titik lokasi dengan kolom minimal: **Latitude**, **Longitude**.  
-Jika ada kolom **Warna**, maka titik akan diberi warna sesuai.  
-Filter otomatis akan muncul berdasarkan kolom dalam file.  
-Pilih warna kustom untuk masing-masing titik jika diperlukan.
-""")
+st.sidebar.header("📁 Upload File Excel")
+uploaded_file = st.sidebar.file_uploader("Upload file Excel", type=["xlsx"])
 
-uploaded_file = st.sidebar.file_uploader("📄 Upload File Excel", type=["xlsx"])
+st.sidebar.markdown("---")
+st.sidebar.header("📄 Lanjutkan dari JSON")
+json_file = st.sidebar.file_uploader("Upload file JSON", type=["json"])
 
+# Inisialisasi session state
+if "marker_colors" not in st.session_state:
+    st.session_state.marker_colors = {}
+
+# ✅ Fungsi caching dan pembersih koordinat
 @st.cache_data
 def load_data(file):
     df = pd.read_excel(file)
     df.columns = df.columns.str.strip()
     return df
 
-# === Initialize Session States ===
-if "kcp_custom_colors" not in st.session_state:
-    st.session_state.kcp_custom_colors = {}
-if "circle_radius" not in st.session_state:
-    st.session_state.circle_radius = 1.0
-if "show_circle" not in st.session_state:
-    st.session_state.show_circle = False
-if "shape_color" not in st.session_state:
-    st.session_state.shape_color = "red"
-if "shape_target_color" not in st.session_state:  # <-- NEW
-    st.session_state.shape_target_color = "green"
-if "enable_cluster" not in st.session_state:
-    st.session_state.enable_cluster = False
+def clean_coordinate(value):
+    if isinstance(value, str):
+        value = value.strip().replace("\n", "").replace("\t", "")
+        value = value.replace(",", ".").replace(" ", "")
+        value = value.replace("−", "-")
+        value = value.replace("..", ".")
+        parts = value.split(".")
+        if len(parts) > 2:
+            value = "".join(parts[:-1]) + "." + parts[-1]
+    try:
+        return float(value)
+    except:
+        return None
 
-# === Available Colors (19 Folium Colors) ===
-available_folium_colors = [
-    "red", "blue", "green", "purple", "orange", "darkred", "lightred",
-    "beige", "darkblue", "darkgreen", "cadetblue", "darkpurple",
-    "white", "pink", "lightblue", "lightgreen", "gray", "black", "lightgray"
-]
-
-# === Load from JSON ===
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🔄 Lanjutkan dari JSON")
-uploaded_json = st.sidebar.file_uploader("Upload file JSON", type="json")
-if uploaded_json is not None:
-    if st.sidebar.button("🔄 Load Pengaturan JSON"):
-        progress = json.load(uploaded_json)
-        df = pd.DataFrame(progress["data"])
-        st.session_state.kcp_custom_colors = progress.get("kcp_custom_colors", {})
-        st.session_state.circle_radius = progress.get("circle_radius", 1.0)
-        st.session_state.show_circle = progress.get("show_circle", False)
-        st.session_state.shape_color = progress.get("shape_color", "red")
-        st.session_state.shape_target_color = progress.get("shape_target_color", "green")  # <-- NEW
-        st.session_state.enable_cluster = progress.get("enable_cluster", False)
-        st.session_state.saved_df = df
-        st.success("Data dan pengaturan berhasil dimuat dari JSON.")
-
-if uploaded_file is not None:
+# Proses file
+if uploaded_file:
     df = load_data(uploaded_file)
 
-    st.subheader("🧫 Pilih Kolom Latitude, Longitude, dan Nama Titik")
-    col_lat = st.selectbox("Pilih Kolom Latitude", df.columns, index=None)
-    col_lon = st.selectbox("Pilih Kolom Longitude", df.columns, index=None)
-    name_column = st.selectbox("Pilih Kolom Nama Titik", df.columns, index=None)
+    st.subheader("📍 Konfigurasi Kolom Lokasi")
+    lat_col = st.selectbox("Pilih Kolom Latitude", df.columns, index=list(df.columns).index("Latitude") if "Latitude" in df.columns else 0)
+    lon_col = st.selectbox("Pilih Kolom Longitude", df.columns, index=list(df.columns).index("Longitude") if "Longitude" in df.columns else 0)
+    name_col = st.selectbox("Pilih Kolom Nama Titik", df.columns, index=list(df.columns).index("Lokasi") if "Lokasi" in df.columns else 0)
 
-    if not col_lat or not col_lon or not name_column:
-        st.warning("Silakan pilih ketiga kolom terlebih dahulu.")
-        st.stop()
+    # ✅ Bersihkan koordinat dan simpan ke kolom baru
+    df["Latitude_clean"] = df[lat_col].apply(clean_coordinate)
+    df["Longitude_clean"] = df[lon_col].apply(clean_coordinate)
 
-    df = df.rename(columns={col_lat: "Latitude", col_lon: "Longitude", name_column: "NamaTitik"})
+    df = df.dropna(subset=["Latitude_clean", "Longitude_clean"])
 
-    # Bersihkan dan konversi Latitude & Longitude
-    df["Latitude"] = df["Latitude"].astype(str).str.replace(",", ".")
-    df["Longitude"] = df["Longitude"].astype(str).str.replace(",", ".")
-    df["Latitude"] = pd.to_numeric(df["Latitude"], errors="coerce")
-    df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
-    df.dropna(subset=["Latitude", "Longitude"], inplace=True)
+    # Filter berjenjang
+    st.sidebar.header("🔍 Filter Lokasi")
+    filter_cols = [col for col in df.columns if df[col].nunique() < 100 and df[col].dtype == "object"]
+    selected_filters = {}
+    for col in filter_cols:
+        unique_vals = df[col].dropna().unique()
+        selected = st.sidebar.multiselect(f"{col}", sorted(unique_vals), default=unique_vals)
+        selected_filters[col] = selected
+        df = df[df[col].isin(selected)]
 
-    # Validasi apakah titik berada di wilayah Indonesia
-    if df["Latitude"].mean() < -11 or df["Latitude"].mean() > 6 or df["Longitude"].mean() < 95 or df["Longitude"].mean() > 141:
-        st.warning("⚠️ Titik-titik berada di luar wilayah Indonesia. Periksa apakah kolom Latitude dan Longitude tertukar atau masih menggunakan koma (,) sebagai desimal.")
+    # Load warna marker dari JSON
+    if json_file:
+        try:
+            colors = json.load(json_file)
+            st.session_state.marker_colors = colors
+        except Exception as e:
+            st.error(f"Gagal membaca file JSON: {e}")
 
-    # === Sidebar Filters ===
-    st.sidebar.title("🔎 Filter Lokasi")
-    filter_conditions = {}
-    for col in df.columns:
-        if df[col].nunique() < 100 and col not in ["Latitude", "Longitude", "NamaTitik"]:
-            options = sorted(df[col].dropna().unique())
-            select_all = st.sidebar.checkbox(f"Pilih Semua {col}", value=False, key=f"all_{col}")
-            selected = options if select_all else st.sidebar.multiselect(f"Cari atau pilih {col.lower()}", options, key=f"filter_{col}")
-            if selected:
-                filter_conditions[col] = selected
+    # Peta
+    st.subheader("🗺️ Peta Lokasi")
+    map_center = [df["Latitude_clean"].mean(), df["Longitude_clean"].mean()]
+    folium_map = folium.Map(location=map_center, zoom_start=6)
 
-    for col, selected_vals in filter_conditions.items():
-        df = df[df[col].isin(selected_vals)]
-
-    # === Sidebar Color Settings ===
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🎨 Pilih Warna Untuk Titik Tertentu")
-
-    warna_column = st.sidebar.selectbox("🖍️ Pilih Kolom Referensi Warna", df.columns, index=None)
-    if warna_column:
-        name_list = sorted(df[warna_column].dropna().unique())
-        selected_names = st.sidebar.multiselect("Pilih Nilai dari Kolom Warna", name_list)
-        color_choice = st.sidebar.selectbox("Pilih Warna", available_folium_colors)
-        if selected_names:
-            if st.sidebar.button("🎯 Tandai Nilai dengan Warna Ini"):
-                for val in selected_names:
-                    st.session_state.kcp_custom_colors[val] = color_choice
-
-    if st.sidebar.button("🔄 Reset Semua Warna"):
-        st.session_state.kcp_custom_colors = {}
-
-    # === Sidebar Circle Settings ===
-    st.sidebar.markdown("---")
-    st.session_state.show_circle = st.sidebar.checkbox("🟢 Tampilkan Lingkaran Radius", value=st.session_state.show_circle)
-    st.session_state.circle_radius = st.sidebar.number_input("Masukkan Radius (km) untuk Lingkaran", min_value=0.0, value=st.session_state.circle_radius, step=0.5)
-    st.session_state.shape_color = st.sidebar.selectbox("Pilih Warna Lingkaran", available_folium_colors, index=available_folium_colors.index(st.session_state.shape_color))
-    st.session_state.shape_target_color = st.sidebar.selectbox("Pilih Warna Titik yang Diberi Lingkaran", available_folium_colors, index=available_folium_colors.index(st.session_state.shape_target_color))
-
-    st.sidebar.markdown("---")
-    st.session_state.enable_cluster = st.sidebar.checkbox("📍 Aktifkan Cluster Marker", value=st.session_state.enable_cluster)
-
-    # === Save Progress to JSON ===
-    st.sidebar.markdown("---")
-    progress = {
-        "data": df.to_dict(orient="records"),
-        "kcp_custom_colors": st.session_state.kcp_custom_colors,
-        "circle_radius": st.session_state.circle_radius,
-        "show_circle": st.session_state.show_circle,
-        "shape_color": st.session_state.shape_color,
-        "shape_target_color": st.session_state.shape_target_color,
-        "enable_cluster": st.session_state.enable_cluster
-    }
-    json_bytes = json.dumps(progress).encode('utf-8')
-    st.sidebar.download_button(
-        label="📅 Simpan Progress (JSON)",
-        data=json_bytes,
-        file_name="saved_progress.json",
-        mime="application/json"
-    )
-
-    # === Main Map ===
-    lat_center = df["Latitude"].mean()
-    lon_center = df["Longitude"].mean()
-
-    m = folium.Map(location=[lat_center, lon_center], zoom_start=6)
-    plugins.Draw(export=True).add_to(m)
-
-    marker_group = folium.FeatureGroup(name="Markers")
-    marker_cluster = plugins.MarkerCluster() if st.session_state.enable_cluster else None
+    marker_cluster = MarkerCluster().add_to(folium_map)
 
     for _, row in df.iterrows():
-        lat, lon = row["Latitude"], row["Longitude"]
-        warna = "blue"
-        ref_value = row[warna_column] if warna_column in row else None
-        if ref_value in st.session_state.kcp_custom_colors:
-            warna = st.session_state.kcp_custom_colors[ref_value]
-        elif "Warna" in row and pd.notna(row["Warna"]):
-            warna = row["Warna"]
+        name = str(row[name_col])
+        lat = row["Latitude_clean"]
+        lon = row["Longitude_clean"]
+        color = st.session_state.marker_colors.get(name, "blue")
 
-        popup_text = row["NamaTitik"]
-
-        marker = folium.Marker(
+        folium.Marker(
             location=[lat, lon],
-            popup=popup_text,
-            icon=folium.Icon(color=warna if warna in available_folium_colors else "blue", icon="info-sign")
-        )
+            popup=folium.Popup(name, max_width=300),
+            tooltip=name,
+            icon=folium.Icon(color=color)
+        ).add_to(marker_cluster)
 
-        if st.session_state.enable_cluster:
-            marker_cluster.add_child(marker)
-        else:
-            marker.add_to(marker_group)
+        # Lingkaran jika marker hijau
+        if color == "green":
+            for radius, opacity in zip([25000, 50000, 75000, 100000], [0.25, 0.5, 0.75, 1]):
+                folium.Circle(
+                    location=[lat, lon],
+                    radius=radius,
+                    color="green",
+                    fill=True,
+                    fill_opacity=opacity,
+                ).add_to(folium_map)
 
-        # New: Circle if warna == selected shape_target_color
-        if warna == st.session_state.shape_target_color and st.session_state.show_circle:
-            folium.Circle(
-                radius=st.session_state.circle_radius * 1000,
-                location=[lat, lon],
-                color=st.session_state.shape_color,
-                fill=True,
-                fill_opacity=0.2
-            ).add_to(m)
+    st_data = st_folium(folium_map, width=1000, height=600)
 
-    if st.session_state.enable_cluster:
-        marker_cluster.add_to(m)
-    else:
-        marker_group.add_to(m)
+    # Simpan warna ke JSON
+    st.sidebar.markdown("---")
+    if st.sidebar.button("💾 Simpan Warna Marker ke JSON"):
+        json_bytes = io.BytesIO()
+        json_bytes.write(json.dumps(st.session_state.marker_colors, indent=2).encode("utf-8"))
+        json_bytes.seek(0)
+        st.sidebar.download_button("Download JSON", json_bytes, file_name="marker_colors.json")
 
-    st_data = st_folium(m, use_container_width=True, height=700)
-
-    # === Export Data with Final Color ===
-    df_export = df.copy()
-    def get_final_color(row):
-        ref_val = row[warna_column] if warna_column in row else None
-        if ref_val in st.session_state.kcp_custom_colors:
-            return st.session_state.kcp_custom_colors[ref_val]
-        elif "Warna" in row and pd.notna(row["Warna"]):
-            return row["Warna"]
-        else:
-            return "blue"
-
-    df_export["Warna_Akhir"] = df_export.apply(get_final_color, axis=1)
-
-    buffer = BytesIO()
-    df_export.to_excel(buffer, index=False, engine='openpyxl')
-    buffer.seek(0)
-    st.download_button(
-        label="⬇️ Download Seluruh Data (Excel)",
-        data=buffer,
-        file_name="seluruh_data_dengan_warna.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-else:
-    st.info("Silakan upload file Excel untuk memulai.")
-    if "saved_df" in st.session_state:
-        df = st.session_state.saved_df
-        st.success("Menampilkan data yang dimuat dari JSON sebelumnya.")
-        st.write(df.head())
+    # Ekspor ke Excel
+    st.sidebar.markdown("---")
+    if st.sidebar.button("⬇️ Export Filtered Excel"):
+        export_df = df.copy()
+        export_df["Warna"] = export_df[name_col].map(lambda x: st.session_state.marker_colors.get(str(x), "blue"))
+        towrite = io.BytesIO()
+        with pd.ExcelWriter(towrite, engine='xlsxwriter') as writer:
+            export_df.to_excel(writer, index=False)
+        towrite.seek(0)
+        st.sidebar.download_button("Download Excel", towrite, file_name="filtered_data.xlsx")
