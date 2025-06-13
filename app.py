@@ -19,7 +19,7 @@ json_file = st.sidebar.file_uploader("Upload file JSON", type=["json"])
 if "marker_colors" not in st.session_state:
     st.session_state.marker_colors = {}
 
-# ✅ Fungsi caching dan pembersih koordinat
+# Fungsi caching dan pembersih koordinat
 @st.cache_data
 def load_data(file):
     df = pd.read_excel(file)
@@ -49,21 +49,27 @@ if uploaded_file:
     lon_col = st.selectbox("Pilih Kolom Longitude", df.columns, index=list(df.columns).index("Longitude") if "Longitude" in df.columns else 0)
     name_col = st.selectbox("Pilih Kolom Nama Titik", df.columns, index=list(df.columns).index("Lokasi") if "Lokasi" in df.columns else 0)
 
-    # ✅ Bersihkan koordinat dan simpan ke kolom baru
+    # Bersihkan koordinat dan simpan ke kolom baru
     df["Latitude_clean"] = df[lat_col].apply(clean_coordinate)
     df["Longitude_clean"] = df[lon_col].apply(clean_coordinate)
-
     df = df.dropna(subset=["Latitude_clean", "Longitude_clean"])
 
-    # Filter berjenjang
+    # Filter berjenjang dengan tombol "Pilih Semua"
     st.sidebar.header("🔍 Filter Lokasi")
     filter_cols = [col for col in df.columns if df[col].nunique() < 100 and df[col].dtype == "object"]
     selected_filters = {}
     for col in filter_cols:
-        unique_vals = df[col].dropna().unique()
-        selected = st.sidebar.multiselect(f"{col}", sorted(unique_vals), default=unique_vals)
-        selected_filters[col] = selected
-        df = df[df[col].isin(selected)]
+        with st.sidebar.expander(f"Filter: {col}", expanded=False):
+            unique_vals = sorted(df[col].dropna().unique())
+            all_key = f"select_all_{col}"
+            st.session_state.setdefault(all_key, True)
+            select_all = st.checkbox("Pilih Semua", key=all_key)
+            if select_all:
+                selected = st.multiselect(f"Pilih {col}", unique_vals, default=unique_vals, key=f"multi_{col}")
+            else:
+                selected = st.multiselect(f"Pilih {col}", unique_vals, key=f"multi_{col}")
+            selected_filters[col] = selected
+            df = df[df[col].isin(selected)]
 
     # Load warna marker dari JSON
     if json_file:
@@ -73,12 +79,19 @@ if uploaded_file:
         except Exception as e:
             st.error(f"Gagal membaca file JSON: {e}")
 
+    # ✅ Opsi clustering
+    st.sidebar.markdown("---")
+    use_cluster = st.sidebar.checkbox("Aktifkan Clustering", value=True)
+
     # Peta
     st.subheader("🗺️ Peta Lokasi")
     map_center = [df["Latitude_clean"].mean(), df["Longitude_clean"].mean()]
     folium_map = folium.Map(location=map_center, zoom_start=6)
 
-    marker_cluster = MarkerCluster().add_to(folium_map)
+    if use_cluster:
+        marker_layer = MarkerCluster().add_to(folium_map)
+    else:
+        marker_layer = folium.FeatureGroup(name="Markers").add_to(folium_map)
 
     for _, row in df.iterrows():
         name = str(row[name_col])
@@ -91,9 +104,8 @@ if uploaded_file:
             popup=folium.Popup(name, max_width=300),
             tooltip=name,
             icon=folium.Icon(color=color)
-        ).add_to(marker_cluster)
+        ).add_to(marker_layer)
 
-        # Lingkaran jika marker hijau
         if color == "green":
             for radius, opacity in zip([25000, 50000, 75000, 100000], [0.25, 0.5, 0.75, 1]):
                 folium.Circle(
