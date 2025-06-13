@@ -75,9 +75,17 @@ if uploaded_file is not None:
         st.stop()
 
     df = df.rename(columns={col_lat: "Latitude", col_lon: "Longitude", name_column: "NamaTitik"})
+
+    # Bersihkan dan konversi Latitude & Longitude
+    df["Latitude"] = df["Latitude"].astype(str).str.replace(",", ".")
+    df["Longitude"] = df["Longitude"].astype(str).str.replace(",", ".")
     df["Latitude"] = pd.to_numeric(df["Latitude"], errors="coerce")
     df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
     df.dropna(subset=["Latitude", "Longitude"], inplace=True)
+
+    # Validasi apakah titik berada di wilayah Indonesia
+    if df["Latitude"].mean() < -11 or df["Latitude"].mean() > 6 or df["Longitude"].mean() < 95 or df["Longitude"].mean() > 141:
+        st.warning("⚠️ Titik-titik berada di luar wilayah Indonesia. Periksa apakah kolom Latitude dan Longitude tertukar atau masih menggunakan koma (,) sebagai desimal.")
 
     # === Sidebar Filters ===
     st.sidebar.title("🔎 Filter Lokasi")
